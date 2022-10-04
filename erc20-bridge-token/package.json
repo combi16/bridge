@@ -1,0 +1,53 @@
+{
+    "name": "erc20-bridge-token",
+    "version": "0.1.0",
+    "description": "Generic ERC20 bridge token factory",
+    "license": "MIT",
+    "dependencies": {
+        "@openzeppelin/cli": "^2.8.1",
+        "@openzeppelin/contracts": "^4.7",
+        "@openzeppelin/contracts-upgradeable": "^4.5.2",
+        "dotenv": "^16.0.1",
+        "hardhat-contract-sizer": "^2.5.1",
+        "rainbow-bridge-lib": "https://gitpkg.now.sh/aurora-is-near/rainbow-bridge/utils?327ff937bda3e3a99386fe488994f3c8e35f8aa0",
+        "rainbow-bridge-sol": "https://gitpkg.now.sh/aurora-is-near/rainbow-bridge/contracts/eth?327ff937bda3e3a99386fe488994f3c8e35f8aa0",
+        "rainbow-bridge-utils": "https://gitpkg.now.sh/aurora-is-near/rainbow-bridge/utils?327ff937bda3e3a99386fe488994f3c8e35f8aa0",
+        "rainbow-bridge-eth2near-block-relay": "https://gitpkg.now.sh/aurora-is-near/rainbow-bridge/eth2near/eth2near-block-relay?327ff937bda3e3a99386fe488994f3c8e35f8aa0"
+    },
+    "devDependencies": {
+        "@nomiclabs/hardhat-ethers": "^2.1.0",
+        "@nomiclabs/hardhat-etherscan": "^3.1.0",
+        "@nomiclabs/hardhat-waffle": "^2.0.3",
+        "@openzeppelin/hardhat-upgrades": "^1.17.0",
+        "@openzeppelin/test-helpers": "^0.5.5",
+        "chai": "^4.3.6",
+        "coveralls": "^3.1.0",
+        "eslint": "^6.8.0",
+        "eslint-config-standard": "^14.1.1",
+        "eslint-plugin-import": "^2.20.2",
+        "eslint-plugin-node": "^11.1.0",
+        "eslint-plugin-promise": "^4.0.1",
+        "eslint-plugin-standard": "^4.0.0",
+        "eth-gas-reporter": "^0.2.17",
+        "ethereum-waffle": "^3.4.4",
+        "ethers": "^5.6.6",
+        "hardhat": "^2.10.1",
+        "solc": "^0.6",
+        "solidity-coverage": "^0.7.20",
+        "solium": "^1.2.5",
+        "truffle": "^5.1.24",
+        "truffle-flattener": "^1.4.4"
+    },
+    "scripts": {
+        "build": "yarn hardhat compile",
+        "testrpc": "",
+        "test": "yarn hardhat test",
+        "coverage": "yarn hardhat coverage",
+        "lint:js": "eslint .",
+        "lint:js:fix": "eslint . --fix",
+        "lint:sol": "solium -d .",
+        "lint:sol:fix": "solium -d . --fix",
+        "lint": "yarn run lint:js && yarn run lint:sol",
+        "lint:fix": "yarn run lint:js:fix && yarn run lint:sol:fix"
+    }
+}
