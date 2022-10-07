@@ -1,0 +1,2 @@
+cargo:rustc-env=TYPENUM_BUILD_CONSTS=/workspace/bridge/bridge-token/target/release/build/typenum-c48d736361533e60/out/consts.rs
+cargo:rustc-env=TYPENUM_BUILD_OP=/workspace/bridge/bridge-token/target/release/build/typenum-c48d736361533e60/out/op.rs

@@ -1,0 +1,10 @@
+/workspace/bridge/bridge-token-factory/target/debug/deps/near_network_primitives-aab5b890ae74af44.rmeta: /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/lib.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/blacklist.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/config.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/mod.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/edge.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/types.rs
+
+/workspace/bridge/bridge-token-factory/target/debug/deps/near_network_primitives-aab5b890ae74af44.d: /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/lib.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/blacklist.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/config.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/mod.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/edge.rs /workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/types.rs
+
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/lib.rs:
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/blacklist.rs:
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/config.rs:
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/mod.rs:
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/network_protocol/edge.rs:
+/workspace/.cargo/registry/src/github.com-1ecc6299db9ec823/near-network-primitives-0.14.0/src/types.rs:

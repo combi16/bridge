@@ -2,13 +2,14 @@ use bridge_common::prover::{EthAddress, EthEventParams, EthRebaseEvent};
 use ethabi::{ParamType, Token};
 use hex::ToHex;
 use near_sdk::{Balance};
+use near_sdk::json_types::U128;
 
 /// Data that was emitted by the Ethereum Rebase event.
 #[derive(Debug, Eq, PartialEq)]
 pub struct EthRebasedEvent {
     pub rebaser_address: EthAddress,
     pub token: String,
-    pub epoch: u128,
+    pub epoch: U128,
     pub total_supply: Balance,
 }
 
@@ -32,7 +33,8 @@ impl EthRebasedEvent {
             .clone()
             .to_uint()
             .unwrap()
-            .as_u128();
+            .as_u128()
+            .into();
         let total_supply = event.log.params[2]
             .value
             .clone()
@@ -57,7 +59,7 @@ impl EthRebasedEvent {
                 self.rebaser_address.to_vec(),
             ],
             vec![
-                Token::Uint(self.epoch.into()),
+                Token::Uint(u128::from(self.epoch).into()),
                 Token::Uint(self.total_supply.into()),
             ],
         )
@@ -69,7 +71,7 @@ impl std::fmt::Display for EthRebasedEvent {
         write!(
             f,
             "token: {}; epoch: {}; total_supply: {}",
-            self.token, self.epoch, self.total_supply
+            self.token, u128::from(self.epoch), self.total_supply
         )
     }
 }
@@ -77,16 +79,15 @@ impl std::fmt::Display for EthRebasedEvent {
 #[cfg(test)]
 mod tests {
     use super::EthRebasedEvent;
-    use rand::prelude::ThreadRng;
-    use rand::Rng;
-
+    use near_sdk::json_types::U128;
+    
     #[test]
     fn test_event_data() {
         let event_data = EthRebasedEvent {
-            rebaser_address: rng.gen::<[u8; 20]>(),
-            token: hex::encode(rng.gen::<[u8; 20]>()),
-            epoch: rng.gen::<u128>(),
-            total_supply: rng.gen::<u128>(),
+            rebaser_address: [0u8; 20],
+            token: "6b175474e89094c44da98b954eedeac495271d0f".to_string(),
+            epoch: U128(20),
+            total_supply: 1000,
         };
         let data = event_data.to_log_entry_data();
         let result = EthRebasedEvent::from_log_entry_data(&data);

@@ -110,8 +110,8 @@ pub trait ExtBridgeTokenFactory {
         #[serializer(borsh)]
         verification_success: bool,
         #[serializer(borsh)] token: String,
-        #[serializer(borsh)] epoch: u128,
-        #[serializer(borsh)] requested_adjustment: Balance,
+        #[serializer(borsh)] epoch: U128,
+        #[serializer(borsh)] total_supply: Balance,
         #[serializer(borsh)] proof: Proof,
     ) -> Promise;
 
@@ -129,24 +129,28 @@ pub trait ExtBridgeTokenFactory {
     ) -> Promise;
 }
 
-#[ext_contract(ext_fungible_token)]
-pub trait FungibleToken {
-    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-}
+// #[ext_contract(ext_fungible_token)]
+// pub trait FungibleToken {
+//     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+// }
 
 #[ext_contract(ext_bridge_token)]
 pub trait ExtBridgeToken {
     fn mint(&self, account_id: AccountId, amount: U128);
 
-    fn rebase(&self, epoch: u128, requested_adjustment: Balance);
+    fn rebase(&self, epoch: U128, total_supply: Balance);
 
-    fn ft_transfer_call(
-        &mut self,
-        receiver_id: AccountId,
-        amount: U128,
-        memo: Option<String>,
-        msg: String,
-    ) -> PromiseOrValue<U128>;
+    // in place of NEP-141 ft_transfer 
+    fn transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+
+    // // in place of NEP-141 ft_transfer_call
+    // fn transfer_call(
+    //     &mut self,
+    //     receiver_id: AccountId,
+    //     amount: U128,
+    //     memo: Option<String>,
+    //     msg: String,
+    // ) -> PromiseOrValue<U128>;
 
     fn set_metadata(
         &mut self,
@@ -421,7 +425,7 @@ impl BridgeTokenFactory {
                     ext_bridge_token::ext(self.get_bridge_token_account_id(token))
                         .with_static_gas(FT_TRANSFER_CALL_GAS)
                         .with_attached_deposit(1)
-                        .ft_transfer_call(target, amount.into(), None, message),
+                        .transfer_call(target, amount.into(), None, message),
                 ),
             None => ext_bridge_token::ext(self.get_bridge_token_account_id(token))
                 .with_static_gas(MINT_GAS)
@@ -440,8 +444,8 @@ impl BridgeTokenFactory {
         #[serializer(borsh)]
         verification_success: bool,
         #[serializer(borsh)] token: String,
-        #[serializer(borsh)] epoch: u128,
-        #[serializer(borsh)] requested_adjustment: Balance,
+        #[serializer(borsh)] epoch: U128,
+        #[serializer(borsh)] total_supply: Balance,
         #[serializer(borsh)] proof: Proof,
     ) -> Promise {
         assert_self();
@@ -466,17 +470,11 @@ impl BridgeTokenFactory {
             Some(message) => ext_bridge_token::ext(self.get_bridge_token_account_id(token.clone()))
                 .with_static_gas(REBASE_GAS)
                 .with_attached_deposit(env::attached_deposit() - required_deposit)
-                .mint(env::current_account_id(), requested_adjustment.into())
-                .then(
-                    ext_bridge_token::ext(self.get_bridge_token_account_id(token))
-                        .with_static_gas(FT_TRANSFER_CALL_GAS)
-                        .with_attached_deposit(1)
-                        .ft_transfer_call(target, requested_adjustment.into(), None, message),
-                ),
+                .rebase(epoch, total_supply.into()),
             None => ext_bridge_token::ext(self.get_bridge_token_account_id(token))
-                .with_static_gas(MINT_GAS)
+                .with_static_gas(REBASE_GAS)
                 .with_attached_deposit(env::attached_deposit() - required_deposit)
-                .mint(target, requested_adjustment.into()),
+                .rebase(epoch, total_supply.into()),
         }
     }
 
@@ -752,7 +750,7 @@ mod tests {
     #[should_panic]
     fn test_fail_deploy_bridge_token() {
         set_env!(predecessor_account_id: alice());
-        let mut contract = BridgeTokenFactory::new(prover(), token_locker(), rebaser_address());
+        let mut contract = BridgeTokenFactory::new(prover(), token_locker(), token_rebaser());
         set_env!(
             predecessor_account_id: alice(),
             attached_deposit: BRIDGE_TOKEN_INIT_BALANCE,
@@ -871,7 +869,7 @@ mod tests {
     #[test]
     fn only_admin_can_pause() {
         set_env!(predecessor_account_id: alice());
-        let mut contract = BridgeTokenFactory::new(prover(), token_locker(), rebaser_address());
+        let mut contract = BridgeTokenFactory::new(prover(), token_locker(), token_rebaser());
 
         // Admin can pause
         set_env!(

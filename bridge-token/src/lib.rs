@@ -1,21 +1,39 @@
 use admin_controlled::Mask;
+use near_contract_standards::fungible_token::events::FtTransfer;
 use near_contract_standards::fungible_token::metadata::{
     FungibleTokenMetadata, FungibleTokenMetadataProvider, FT_METADATA_SPEC,
 };
+use near_contract_standards::fungible_token::receiver::*;
+use near_contract_standards::fungible_token::resolver::*;
 use near_contract_standards::fungible_token::FungibleToken;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::collections::LookupMap;
 use near_sdk::json_types::{Base64VecU8, U128};
+use near_sdk::require;
 use near_sdk::{
     assert_one_yocto, env, ext_contract, near_bindgen, AccountId, Balance, Gas, PanicOnDefault,
     Promise, PromiseOrValue, StorageUsage,
 };
+use std::ops::Div;
+// use ethnum::U256;
+mod ft_core;
+mod ft_internal;
+
+const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(5_000_000_000_000);
+const GAS_FOR_FT_TRANSFER_CALL: Gas = Gas(25_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER.0);
 
 /// Gas to call finish withdraw method on factory.
 const FINISH_WITHDRAW_GAS: Gas = Gas(Gas::ONE_TERA.0 * 50);
 
-/// TODO: calculate correct rebase gas fee
-/// Gas to call rebase method on bridge token.
-const REBASE_GAS: Gas = Gas(Gas::ONE_TERA.0 * 10);
+const DECIMALS: Balance = 9;
+const MAX_UINT128: Balance = u128::MAX;
+const INITIAL_AMPL_SUPPLY: Balance = 50 * 10 ^ 6 * 10 ^ DECIMALS;
+
+// TOTAL_GONS is a multiple of INITIAL_AMPL_SUPPLY so that gons_per_ampl is an integer.
+const TOTAL_GONS: Balance = MAX_UINT128 - (MAX_UINT128 % INITIAL_AMPL_SUPPLY);
+
+// MAX_SUPPLY = maximum integer < (sqrt(4*TOTAL_GONS + 1) - 1) / 2
+const MAX_SUPPLY: Balance = u128::MAX;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -27,13 +45,17 @@ pub struct BridgeToken {
     reference: String,
     reference_hash: Base64VecU8,
     decimals: u8,
+    global_ampl_supply: Balance,
+    gons_per_ampl: Balance,
+    gons_accounts: LookupMap<AccountId, Balance>,
+    gons_supply: Balance,
     paused: Mask,
     #[cfg(feature = "migrate_icon")]
     icon: Option<String>,
 }
 
 const PAUSE_WITHDRAW: Mask = 1 << 0;
-const PAUSE_REBASE: Mask = 1 <<1;
+const PAUSE_REBASE: Mask = 1 << 1;
 
 #[ext_contract(ext_bridge_token_factory)]
 pub trait ExtBridgeTokenFactory {
@@ -48,7 +70,7 @@ pub trait ExtBridgeTokenFactory {
 #[near_bindgen]
 impl BridgeToken {
     #[init]
-    pub fn new() -> Self {
+    pub fn new(_global_ampl_supply: Balance) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
             controller: env::predecessor_account_id(),
@@ -58,6 +80,10 @@ impl BridgeToken {
             reference: String::default(),
             reference_hash: Base64VecU8(vec![]),
             decimals: 0,
+            global_ampl_supply: _global_ampl_supply,
+            gons_per_ampl: TOTAL_GONS.div(_global_ampl_supply),
+            gons_accounts: LookupMap::new(b"m"),
+            gons_supply: 0,
             paused: Mask::default(),
             #[cfg(feature = "migrate_icon")]
             icon: None,
@@ -90,65 +116,36 @@ impl BridgeToken {
     }
 
     #[payable]
-    pub fn mint(&mut self, account_id: AccountId, amount: U128) {
+    pub fn mint(&mut self, account_id: AccountId, amount: Balance) {
         assert_eq!(
             env::predecessor_account_id(),
             self.controller,
             "Only controller can call mint"
         );
+        assert!(
+            self.token.total_supply <= self.global_ampl_supply,
+            "wAMPL exceed total supply"
+        );
+        assert!(
+            self.token.total_supply <= MAX_SUPPLY,
+            "wAMPL exceed maximum supply"
+        );
 
-        self.storage_deposit(Some(account_id.clone()), None);
-        self.token.internal_deposit(&account_id, amount.into());
+        self.internal_deposit(&account_id, amount.into());
     }
 
     #[payable]
     pub fn rebase(&mut self, epoch: U128, total_supply: Balance) {
+        self.check_not_paused(PAUSE_REBASE);
         assert_eq!(
             env::predecessor_account_id(),
             self.controller,
-            "Only controller can call rrebase"
+            "Only controller can call rebase"
         );
-        self.ft_rebase(epoch.clone(), total_supply.clone());
+        assert_one_yocto();
+
+        self.ft_rebase(epoch, total_supply);
     }
-
-    // /// Provide near rebase without dampening effect.
-    // /// This creates an opportunity for a arbitrage on the rebase token.
-    // #[payable]
-    // pub fn ft_rebase(&mut self, _epoch: u128, requested_adjustment: Balance) {
-    //     self.check_not_paused(PAUSE_REBASE);
-
-    //     assert_one_yocto();
-    //     Promise::new(env::predecessor_account_id()).transfer(1);
-
-    //     if requested_adjustment == 0 as Balance {
-    //         self.token.total_supply;
-    //     }
-    //     let _acc_iter = self._accounts.iter();
-    //     // ration requested adjustment across accounts
-    //     if requested_adjustment < 0 as Balance {
-    //         for _acc in _acc_iter {
-    //             self.token.internal_withdraw(
-    //                 &_acc,
-    //                 &requested_adjustment *
-    //                 Div::div(
-    //                     u128::from(self.token.accounts.get(_acc).unwrap_or(0)),
-    //                     u128::from(self.token.total_supply),
-    //                 ),
-    //             );
-    //         }
-    //     } else {
-    //         for _acc in _acc_iter {
-    //             self.token.internal_deposit(
-    //                 &_acc,
-    //                 &requested_adjustment *
-    //                 Div::div(
-    //                     u128::from(self.token.accounts.get(_acc).unwrap_or(0)),
-    //                     u128::from(self.token.total_supply),
-    //                 ),
-    //             );
-    //         }
-    //     }
-    // }
 
     #[payable]
     pub fn withdraw(&mut self, amount: U128, recipient: String) -> Promise {
@@ -178,13 +175,51 @@ impl BridgeToken {
 
 impl BridgeToken {
     /// Provide near rebase without dampening effect.
-    /// This creates an opportunity for a arbitrage on the rebase token.
-    fn ft_rebase(&self, epoch: U128, total_supply: Balance) {
+    /// This creates an opportunity for a cross-chain arbitrage of the rebase token.
+    fn ft_rebase(&mut self, epoch: U128, new_global_total_supply: Balance) {
+        let prev_global_ampl_supply = self.global_ampl_supply;
+        if new_global_total_supply == prev_global_ampl_supply {}
 
+        self.internal_rebase(epoch, new_global_total_supply, prev_global_ampl_supply)
+    }
+
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, _memo: Option<String>) {
+        assert_one_yocto();
+        let sender_id = env::predecessor_account_id();
+        let amount: Balance = amount.into();
+        self.internal_transfer(&sender_id, &receiver_id, amount, _memo);
+    }
+
+    fn ft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        amount: U128,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        assert_one_yocto();
+        require!(
+            env::prepaid_gas() > GAS_FOR_FT_TRANSFER_CALL,
+            "More gas is required"
+        );
+        let sender_id = env::predecessor_account_id();
+        let amount: Balance = amount.into();
+        self.internal_transfer(&sender_id, &receiver_id, amount, memo);
+        // Initiating receiver's call and the callback
+        ext_ft_receiver::ext(receiver_id.clone())
+            .with_static_gas(env::prepaid_gas() - GAS_FOR_FT_TRANSFER_CALL)
+            .ft_on_transfer(sender_id.clone(), amount.into(), msg)
+            .then(
+                ext_ft_resolver::ext(env::current_account_id())
+                    .with_static_gas(GAS_FOR_RESOLVE_TRANSFER)
+                    .ft_resolve_transfer(sender_id, receiver_id, amount.into()),
+            )
+            .into()
     }
 }
 
-near_contract_standards::impl_fungible_token_core!(BridgeToken, token);
+// custom fungible core for rebase token
+impl_fungible_token_core!(BridgeToken, token);
 near_contract_standards::impl_fungible_token_storage!(BridgeToken, token);
 
 #[near_bindgen]
@@ -207,6 +242,8 @@ impl FungibleTokenMetadataProvider for BridgeToken {
 
 admin_controlled::impl_admin_controlled!(BridgeToken, paused);
 
+// test
+
 // Migration
 
 #[cfg(feature = "migrate_icon")]
@@ -219,6 +256,11 @@ pub struct BridgeTokenV0 {
     reference: String,
     reference_hash: Base64VecU8,
     decimals: u8,
+    global_ampl_supply: Balance,
+    total_ampl_supply: Balance,
+    gons_per_ampl: Balance,
+    gons_accounts: LookupMap<AccountId, Balance>,
+    gons_supply: Balance,
     paused: Mask,
 }
 
@@ -233,6 +275,10 @@ impl From<BridgeTokenV0> for BridgeToken {
             reference: obj.reference,
             reference_hash: obj.reference_hash,
             decimals: obj.decimals,
+            global_ampl_supply: obj.global_ampl_supply,
+            gons_per_ampl: obj.gons_per_ampl,
+            gons_accounts: obj.gons_accounts,
+            gons_supply: obj.gons_supply,
             paused: obj.paused,
             icon: None,
         }

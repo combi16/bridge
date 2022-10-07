@@ -1,0 +1,1 @@
+{"rustc":14997152855509374802,"features":"[]","target":13294766831966498538,"profile":89792565241913630,"path":17427144661404360582,"deps":[],"local":[{"CheckDepInfo":{"dep_info":"release/.fingerprint/radium-802847222d2e3d23/dep-build-script-build-script-build"}}],"rustflags":["-C","link-args=-s"],"metadata":13584132765049742942,"config":2202906307356721367,"compile_kind":0}
