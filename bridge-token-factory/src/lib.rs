@@ -1,16 +1,16 @@
 use admin_controlled::{AdminControlled, Mask};
+use bridge_common::{parse_recipient, prover::*, result_types, Recipient};
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::json_types::{Base64VecU8, U128};
 use near_sdk::{
     env, ext_contract, near_bindgen, AccountId, Balance, Gas, PanicOnDefault, Promise, PublicKey,
 };
+use near_sdk_inner::{PromiseOrValue, ONE_NEAR};
 
 pub use bridge_common::prover::{validate_eth_address, Proof};
-use bridge_common::{parse_recipient, prover::*, result_types, Recipient};
 pub use lock_event::EthLockedEvent;
 pub use log_metadata_event::TokenMetadataEvent;
-use near_sdk_inner::{PromiseOrValue, ONE_NEAR};
 pub use rebase_event::EthRebasedEvent;
 
 mod lock_event;
@@ -111,7 +111,7 @@ pub trait ExtBridgeTokenFactory {
         verification_success: bool,
         #[serializer(borsh)] token: String,
         #[serializer(borsh)] epoch: U128,
-        #[serializer(borsh)] total_supply: Balance,
+        #[serializer(borsh)] new_total_supply: Balance,
         #[serializer(borsh)] proof: Proof,
     ) -> Promise;
 
@@ -129,28 +129,21 @@ pub trait ExtBridgeTokenFactory {
     ) -> Promise;
 }
 
-// #[ext_contract(ext_fungible_token)]
-// pub trait FungibleToken {
-//     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
-// }
-
 #[ext_contract(ext_bridge_token)]
 pub trait ExtBridgeToken {
     fn mint(&self, account_id: AccountId, amount: U128);
 
-    fn rebase(&self, epoch: U128, total_supply: Balance);
+    fn rebase(&mut self, epoch: U128, new_total_supply: Balance);
 
-    // in place of NEP-141 ft_transfer 
-    fn transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
+    fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 
-    // // in place of NEP-141 ft_transfer_call
-    // fn transfer_call(
-    //     &mut self,
-    //     receiver_id: AccountId,
-    //     amount: U128,
-    //     memo: Option<String>,
-    //     msg: String,
-    // ) -> PromiseOrValue<U128>;
+    fn ft_transfer_call(
+        &mut self,
+        receiver_id: AccountId,
+        amount: U128,
+        memo: Option<String>,
+        msg: String,
+    ) -> PromiseOrValue<U128>;
 
     fn set_metadata(
         &mut self,
@@ -286,7 +279,7 @@ impl BridgeTokenFactory {
             )
     }
 
-    /// Rebase from Ethereum to NEAR based on the proof of the rebased tokens.
+    /// Rebase token accounts based on the proof of the rebased tokens.
     /// Must attach enough NEAR funds to cover for storage of the proof.
     #[payable]
     pub fn rebase(&mut self, #[serializer(borsh)] proof: Proof) -> Promise {
@@ -321,12 +314,7 @@ impl BridgeTokenFactory {
                 ext_self::ext(env::current_account_id())
                     .with_static_gas(FINISH_REBASE_GAS + REBASE_GAS + FT_TRANSFER_CALL_GAS)
                     .with_attached_deposit(env::attached_deposit())
-                    .finish_rebase(
-                        event.token,
-                        event.epoch,
-                        event.total_supply,
-                        proof_1,
-                    ),
+                    .finish_rebase(event.token, event.epoch, event.new_total_supply, proof_1),
             )
     }
 
@@ -425,7 +413,7 @@ impl BridgeTokenFactory {
                     ext_bridge_token::ext(self.get_bridge_token_account_id(token))
                         .with_static_gas(FT_TRANSFER_CALL_GAS)
                         .with_attached_deposit(1)
-                        .transfer_call(target, amount.into(), None, message),
+                        .ft_transfer_call(target, amount.into(), None, message),
                 ),
             None => ext_bridge_token::ext(self.get_bridge_token_account_id(token))
                 .with_static_gas(MINT_GAS)
@@ -434,8 +422,7 @@ impl BridgeTokenFactory {
         }
     }
 
-    // TODO: implement rebase method in bridge token
-    /// Finish depositing once the proof was successfully validated. 
+    /// Finish rebase once the proof was successfully validated.
     /// Can only be called by the contract itself.
     #[payable]
     pub fn finish_rebase(
@@ -445,7 +432,7 @@ impl BridgeTokenFactory {
         verification_success: bool,
         #[serializer(borsh)] token: String,
         #[serializer(borsh)] epoch: U128,
-        #[serializer(borsh)] total_supply: Balance,
+        #[serializer(borsh)] new_total_supply: Balance,
         #[serializer(borsh)] proof: Proof,
     ) -> Promise {
         assert_self();
@@ -458,26 +445,18 @@ impl BridgeTokenFactory {
                 >= required_deposit + self.bridge_token_storage_deposit_required
         );
 
-        let Recipient { target, message } = parse_recipient(token.clone());
+        let _epoch: u128 = epoch.into();
 
         env::log_str(&format!(
-            "Finish rebase. Target:{} Message:{:?}",
-            target, message
+            "Finish rebase. Epoch:{} New Total Supply:{:?}",
+            _epoch, new_total_supply
         ));
-        
-        // TODO: replace mint and transfer with rebase method in BridgeToken contract
-        match message {
-            Some(message) => ext_bridge_token::ext(self.get_bridge_token_account_id(token.clone()))
-                .with_static_gas(REBASE_GAS)
-                .with_attached_deposit(env::attached_deposit() - required_deposit)
-                .rebase(epoch, total_supply.into()),
-            None => ext_bridge_token::ext(self.get_bridge_token_account_id(token))
-                .with_static_gas(REBASE_GAS)
-                .with_attached_deposit(env::attached_deposit() - required_deposit)
-                .rebase(epoch, total_supply.into()),
-        }
-    }
 
+        ext_bridge_token::ext(self.get_bridge_token_account_id(token))
+            .with_static_gas(REBASE_GAS)
+            .with_attached_deposit(env::attached_deposit() - required_deposit)
+            .rebase(epoch, new_total_supply.into())
+    }
 
     /// Burn given amount of tokens and unlock it on the Ethereum side for the recipient address.
     /// We return the amount as u128 and the address of the beneficiary as `[u8; 20]` for ease of
@@ -697,7 +676,7 @@ mod tests {
     }
 
     fn token_rebaser() -> String {
-        "6b105474e89094c44da98b954eedeac495271d0f".to_string()        
+        "D46bA6D942050d489DBd938a2C909A5d5039A161".to_string()
     }
 
     /// Generate a valid ethereum address

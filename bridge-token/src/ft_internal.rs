@@ -1,13 +1,12 @@
 use crate::*;
 
 impl BridgeToken {
-    pub fn internal_unwrap_balance_of(&self, account_id: &AccountId) -> (Balance, Balance) {
+    pub fn internal_unwrap_balance_of(&mut self, account_id: &AccountId) -> (Balance, Balance) {
+        self.internal_update_scaler();
         if let Some(gons_balance) = self.gons_accounts.get(account_id) {
-            match self.token.accounts.get(account_id) {
-                Some(ampl_balance) => return (gons_balance, ampl_balance),
-                None => env::panic_str(
-                    format!("The account {} is not registered", &account_id).as_str(),
-                ),
+            match gons_balance.checked_div(self.gons_per_ampl) {
+                Some(ampl_balance) => (ampl_balance, gons_balance),
+                _ => env::panic_str(format!("Gons balance overflow").as_str()),
             }
         } else {
             env::panic_str(format!("The account {} is not registered", &account_id).as_str());
@@ -16,7 +15,7 @@ impl BridgeToken {
 
     pub fn internal_deposit(&mut self, account_id: &AccountId, amount: Balance) {
         let (gon_balance, ampl_balance) = self.internal_unwrap_balance_of(account_id);
-        //update gons
+
         if let Some(new_balance) = gon_balance.checked_add(amount) {
             self.gons_accounts.insert(account_id, &new_balance);
             self.gons_supply = self
@@ -26,7 +25,7 @@ impl BridgeToken {
         } else {
             env::panic_str("Balance overflow");
         }
-        // update wrapped-ampl
+
         if let Some(new_balance) = ampl_balance.checked_add(amount) {
             self.token.accounts.insert(account_id, &new_balance);
             self.token.total_supply = self
@@ -41,7 +40,7 @@ impl BridgeToken {
 
     pub fn internal_withdraw(&mut self, account_id: &AccountId, amount: Balance) {
         let (gon_balance, ampl_balance) = self.internal_unwrap_balance_of(account_id);
-        //update gons
+        //withdraw gons
         if let Some(new_balance) = gon_balance.checked_sub(amount) {
             self.gons_accounts.insert(account_id, &new_balance);
             self.gons_supply = self
@@ -51,7 +50,7 @@ impl BridgeToken {
         } else {
             env::panic_str("Balance overflow");
         }
-        // update wrapped-ampl
+        // withdraw wrapped-ampl
         if let Some(new_balance) = ampl_balance.checked_sub(amount) {
             self.token.accounts.insert(account_id, &new_balance);
             self.token.total_supply = self
@@ -87,33 +86,53 @@ impl BridgeToken {
         .emit();
     }
 
-    pub fn internal_rebase(
-        &mut self,
-        _epoch: U128,
-        new_global_total_supply: Balance,
-        prev_global_ampl_supply: Balance,
-    ) {
-        // update w-ample total supply
-        if let Some(_supply) = self
+    pub fn internal_update_scaler(&mut self) {
+        let current_global_ampl_supply = self.global_ampl_supply;
+
+        if let Some(current_gons_per_ampl) = TOTAL_GONS.checked_div(current_global_ampl_supply) {
+            self.gons_per_ampl = current_gons_per_ampl;
+        } else {
+            env::panic_str("Total gons overflow");
+        }
+    }
+
+    pub fn internal_update_token_supply(&mut self, new_total_supply: Balance) {
+        let prev_global_ampl_supply = self.global_ampl_supply;
+
+        if let Some(temp_global_total_supply) = self
             .token
             .total_supply
-            .checked_mul(new_global_total_supply.clone())
+            .checked_mul(new_total_supply.clone())
         {
-            match _supply.checked_div(prev_global_ampl_supply) {
+            match temp_global_total_supply.checked_div(prev_global_ampl_supply) {
                 Some(new_wampl_total_supply) => {
                     self.token.total_supply = new_wampl_total_supply;
+                    self.global_ampl_supply = new_total_supply;
                 }
-                None => {}
-            }
-            // update scaler
-            match TOTAL_GONS.checked_div(self.global_ampl_supply) {
-                Some(new_gons_per_ampl) => {
-                    self.gons_per_ampl = new_gons_per_ampl;
+                None => {
+                    env::panic_str(format!("Total supply overflow",).as_str());
                 }
-                None => {}
             }
-        } else {
-            env::panic_str(format!("The token is not registered",).as_str());
+        }
+    }
+
+    pub fn internal_rebase(
+        &mut self,
+        new_total_supply: Balance,
+    ) {
+        // update w-ample total supply
+        self.internal_update_token_supply(new_total_supply);
+        
+        // update scaler
+        self.internal_update_scaler();
+    }
+
+    pub fn internal_register_account(&mut self, account_id: &AccountId) {
+        if self.token.accounts.insert(account_id, &0).is_some() {
+            env::panic_str("The account is already registered");
+        }
+        if self.gons_accounts.insert(account_id, &0).is_some() {
+            env::panic_str("The account is already registered");
         }
     }
 }

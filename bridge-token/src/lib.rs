@@ -14,10 +14,9 @@ use near_sdk::{
     assert_one_yocto, env, ext_contract, near_bindgen, AccountId, Balance, Gas, PanicOnDefault,
     Promise, PromiseOrValue, StorageUsage,
 };
-use std::ops::Div;
-// use ethnum::U256;
-mod ft_core;
+
 mod ft_internal;
+mod macros;
 
 const GAS_FOR_RESOLVE_TRANSFER: Gas = Gas(5_000_000_000_000);
 const GAS_FOR_FT_TRANSFER_CALL: Gas = Gas(25_000_000_000_000 + GAS_FOR_RESOLVE_TRANSFER.0);
@@ -44,11 +43,11 @@ pub struct BridgeToken {
     symbol: String,
     reference: String,
     reference_hash: Base64VecU8,
-    decimals: u8,
-    global_ampl_supply: Balance,
-    gons_per_ampl: Balance,
     gons_accounts: LookupMap<AccountId, Balance>,
+    gons_per_ampl: Balance,
     gons_supply: Balance,
+    global_ampl_supply: Balance,
+    decimals: u8,
     paused: Mask,
     #[cfg(feature = "migrate_icon")]
     icon: Option<String>,
@@ -72,22 +71,26 @@ impl BridgeToken {
     #[init]
     pub fn new(_global_ampl_supply: Balance) -> Self {
         assert!(!env::state_exists(), "Already initialized");
-        Self {
+
+        let mut this = Self {
             controller: env::predecessor_account_id(),
             token: FungibleToken::new(b"t".to_vec()),
             name: String::default(),
             symbol: String::default(),
             reference: String::default(),
             reference_hash: Base64VecU8(vec![]),
-            decimals: 0,
-            global_ampl_supply: _global_ampl_supply,
-            gons_per_ampl: TOTAL_GONS.div(_global_ampl_supply),
             gons_accounts: LookupMap::new(b"m"),
+            gons_per_ampl: 0,
             gons_supply: 0,
+            global_ampl_supply: _global_ampl_supply,
+            decimals: 0,
             paused: Mask::default(),
             #[cfg(feature = "migrate_icon")]
             icon: None,
-        }
+        };
+
+        this.internal_update_scaler();
+        this
     }
 
     pub fn set_metadata(
@@ -135,7 +138,7 @@ impl BridgeToken {
     }
 
     #[payable]
-    pub fn rebase(&mut self, epoch: U128, total_supply: Balance) {
+    pub fn rebase(&mut self, epoch: U128, new_total_supply: Balance) {
         self.check_not_paused(PAUSE_REBASE);
         assert_eq!(
             env::predecessor_account_id(),
@@ -144,7 +147,7 @@ impl BridgeToken {
         );
         assert_one_yocto();
 
-        self.ft_rebase(epoch, total_supply);
+        self.ft_rebase(epoch, new_total_supply);
     }
 
     #[payable]
@@ -176,11 +179,10 @@ impl BridgeToken {
 impl BridgeToken {
     /// Provide near rebase without dampening effect.
     /// This creates an opportunity for a cross-chain arbitrage of the rebase token.
-    fn ft_rebase(&mut self, epoch: U128, new_global_total_supply: Balance) {
-        let prev_global_ampl_supply = self.global_ampl_supply;
-        if new_global_total_supply == prev_global_ampl_supply {}
+    fn ft_rebase(&mut self, _epoch: U128, new_total_supply: Balance) {
+        if new_total_supply == self.global_ampl_supply {}
 
-        self.internal_rebase(epoch, new_global_total_supply, prev_global_ampl_supply)
+        self.internal_rebase(new_total_supply)
     }
 
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, _memo: Option<String>) {
@@ -218,7 +220,7 @@ impl BridgeToken {
     }
 }
 
-// custom fungible core for rebase token
+// custom fungible token core for rebase token
 impl_fungible_token_core!(BridgeToken, token);
 near_contract_standards::impl_fungible_token_storage!(BridgeToken, token);
 
@@ -242,7 +244,145 @@ impl FungibleTokenMetadataProvider for BridgeToken {
 
 admin_controlled::impl_admin_controlled!(BridgeToken, paused);
 
-// test
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::VMContextBuilder;
+    use near_sdk::{testing_env, Balance};
+    // use near_sdk::MockedBlockchain;
+
+    const GLOBAL_TOTAL_SUPPLY: Balance = 1_000_000_000;
+
+    macro_rules! inner_set_env {
+        ($builder:ident) => {
+            $builder
+        };
+
+        ($builder:ident, $key:ident:$value:expr $(,$key_tail:ident:$value_tail:expr)*) => {
+            {
+               $builder.$key($value.try_into().unwrap());
+               inner_set_env!($builder $(,$key_tail:$value_tail)*)
+            }
+        };
+    }
+
+    macro_rules! set_env {
+        ($($key:ident:$value:expr),* $(,)?) => {
+            let mut builder = VMContextBuilder::new();
+            let mut builder = &mut builder;
+            builder = inner_set_env!(builder, $($key: $value),*);
+            testing_env!(builder.build());
+        };
+    }
+
+    fn alice() -> AccountId {
+        "alice.near".parse().unwrap()
+    }
+
+    fn bob() -> AccountId {
+        "bob.near".parse().unwrap()
+    }
+
+    // fn get_context(predecessor_account_id: AccountId) -> VMContextBuilder {
+    //     let mut builder = VMContextBuilder::new();
+    //     builder
+    //         .current_account_id(accounts(0))
+    //         .signer_account_id(predecessor_account_id.clone())
+    //         .predecessor_account_id(predecessor_account_id);
+    //     builder
+    // }
+
+    #[test]
+    fn test_new() {
+        set_env!(predecessor_account_id: alice());
+        let contract = BridgeToken::new(GLOBAL_TOTAL_SUPPLY);
+        assert_eq!(contract.global_ampl_supply, GLOBAL_TOTAL_SUPPLY);
+    }
+
+    #[test]
+    #[should_panic(expected = "The contract is not initialized")]
+    fn test_default() {
+        set_env!(predecessor_account_id: alice());
+        let _contract = BridgeToken::default();
+    }
+
+    #[test]
+    fn test_mint() {
+        set_env!(predecessor_account_id: alice());
+        let mut contract = BridgeToken::new(GLOBAL_TOTAL_SUPPLY.into());
+
+
+        set_env!(predecessor_account_id: alice(), current_account_id: bob());
+        contract.storage_deposit(None, None);
+        let mint_amount = GLOBAL_TOTAL_SUPPLY / 3;
+        contract.mint(bob(), mint_amount);
+
+        assert_eq!(contract.ft_total_supply(), mint_amount.into());
+    }
+
+    // #[test]
+    // fn test_mint() {
+    //     let mut context = get_context(accounts(2));
+    //     testing_env!(context.build());
+    //     let mut contract = BridgeToken::new(GLOBAL_TOTAL_SUPPLY.into());
+    //     testing_env!(context
+    //         .storage_usage(env::storage_usage())
+    //         .attached_deposit(contract.storage_balance_bounds().min.into())
+    //         .predecessor_account_id(accounts(2))
+    //         .build());
+    //     // Paying for account registration, aka storage deposit
+    //     contract.storage_deposit(None, None);
+
+    //     testing_env!(context
+    //         .storage_usage(env::storage_usage())
+    //         .attached_deposit(1)
+    //         .predecessor_account_id(accounts(2))
+    //         .build());
+    //     let mint_amount = GLOBAL_TOTAL_SUPPLY / 3;
+    //     contract.mint(accounts(2), mint_amount.into());
+
+    //     assert_eq!(contract.ft_total_supply(), mint_amount.into());
+
+    // testing_env!(context
+    //     .storage_usage(env::storage_usage())
+    //     .account_balance(env::account_balance())
+    //     .is_view(true)
+    //     .attached_deposit(0)
+    //     .build());
+    // assert_eq!(contract.ft_total_supply(), mint_amount.into());
+}
+
+// #[test]
+// fn test_transfer() {
+//     let mut context = get_context(accounts(2));
+//     testing_env!(context.build());
+//     let mut contract = BridgeToken::new(GLOBAL_TOTAL_SUPPLY.into());
+//     testing_env!(context
+//         .storage_usage(env::storage_usage())
+//         .attached_deposit(contract.storage_balance_bounds().min.into())
+//         .predecessor_account_id(accounts(1))
+//         .build());
+//     // Paying for account registration, aka storage deposit
+//     contract.storage_deposit(None, None);
+
+//     testing_env!(context
+//         .storage_usage(env::storage_usage())
+//         .attached_deposit(1)
+//         .predecessor_account_id(accounts(2))
+//         .build());
+//     let transfer_amount = GLOBAL_TOTAL_SUPPLY / 3;
+//     contract.ft_transfer(accounts(1), transfer_amount.into(), None);
+
+//     testing_env!(context
+//         .storage_usage(env::storage_usage())
+//         .account_balance(env::account_balance())
+//         .is_view(true)
+//         .attached_deposit(0)
+//         .build());
+//     assert_eq!(contract.ft_balance_of(accounts(2)).0, (GLOBAL_TOTAL_SUPPLY - transfer_amount));
+//     assert_eq!(contract.ft_balance_of(accounts(1)).0, transfer_amount);
+// }
+// }
 
 // Migration
 
@@ -255,12 +395,11 @@ pub struct BridgeTokenV0 {
     symbol: String,
     reference: String,
     reference_hash: Base64VecU8,
-    decimals: u8,
     global_ampl_supply: Balance,
-    total_ampl_supply: Balance,
     gons_per_ampl: Balance,
     gons_accounts: LookupMap<AccountId, Balance>,
     gons_supply: Balance,
+    decimals: u8,
     paused: Mask,
 }
 
@@ -274,11 +413,11 @@ impl From<BridgeTokenV0> for BridgeToken {
             symbol: obj.symbol,
             reference: obj.reference,
             reference_hash: obj.reference_hash,
-            decimals: obj.decimals,
             global_ampl_supply: obj.global_ampl_supply,
             gons_per_ampl: obj.gons_per_ampl,
             gons_accounts: obj.gons_accounts,
             gons_supply: obj.gons_supply,
+            decimals: obj.decimals,
             paused: obj.paused,
             icon: None,
         }
